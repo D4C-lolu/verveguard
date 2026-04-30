@@ -1,5 +1,8 @@
 package com.interswitch.verveguard.api;
 
+import com.interswitch.verveguard.api.model.FraudContext;
+import com.interswitch.verveguard.api.model.GateResult;
+
 public interface FraudGate {
     String getName();
     int getOrder();                    // Lower = runs first
