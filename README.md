@@ -1,18 +1,8 @@
-# Verveguard - Fraud Detection Library
+# Verveguard
 
-A Spring Boot auto-configurable fraud detection library providing comprehensive fraud gate implementations including location anomaly detection.
+Spring Boot fraud detection library for payment/transaction systems.
 
-## Features
-
-- **Multiple Fraud Gates**: Blacklist, Rate Limit, Velocity, Transaction Limit, Time Window, and Location Anomaly
-- **Location Anomaly Detection**: Detects impossible travel patterns using offline GeoIP lookups
-- **Zero Network Latency**: All fraud checks use local caches and databases
-- **Configurable Thresholds**: Control block and review thresholds
-- **Spring Boot Starter**: Auto-configuration with sensible defaults
-
-## Quick Start
-
-### 1. Add Dependency
+## Installation
 
 ```xml
 <dependency>
@@ -22,245 +12,177 @@ A Spring Boot auto-configurable fraud detection library providing comprehensive 
 </dependency>
 ```
 
-### 2. Configure Application
+## Quick Start
 
-```properties
-verveguard.enabled=true
-verveguard.block-threshold=70
-verveguard.review-threshold=30
+```java
+@Autowired
+private FraudEvaluator fraudEvaluator;
 
-# Location Anomaly Gate
-verveguard.location-anomaly.enabled=true
-verveguard.location-anomaly.anomaly-threshold=60
-verveguard.location-anomaly.score=35
+FraudContext ctx = FraudContext.builder()
+    .transactionId("txn-123")
+    .accountIdentifier("acc-456")
+    .cardHash("hash-789")
+    .ipAddress("203.0.113.45")
+    .amount(new BigDecimal("1000.00"))
+    .currency("NGN")
+    .transactionTime(Instant.now())
+    .lastKnownIpAddresses(Set.of("203.0.113.44", "198.51.100.1"))
+    .build();
+
+FraudResult result = fraudEvaluator.evaluate(ctx);
+
+switch (result.decision()) {
+    case ALLOW -> proceed();
+    case REVIEW -> flagForReview(result.primaryReasonCode());
+    case BLOCK -> reject(result.primaryReasonCode());
+}
 ```
 
-### 3. Implement FraudDataProvider
+## Gates
 
-Extend `DefaultFraudDataProvider` and implement application-specific methods:
+| Gate | Type | Order | Score | What it does |
+|------|------|-------|-------|--------------|
+| `BlacklistGate` | Hard-block | 1 | 100 | Blocks blacklisted accounts |
+| `RateLimitGate` | Hard-block | 2 | 100 | Blocks rate-limited IPs |
+| `LocationAnomalyGate` | Soft | 4 | 35 | Flags impossible travel |
+| `VelocityGate` | Soft | 10 | 30 | Flags rapid transactions |
+| `TransactionLimitGate` | Soft | 11 | 25 | Flags over-limit amounts |
+| `TimeWindowGate` | Soft | 20 | 10 | Flags after-hours (outside 6am-10pm) |
+
+**Hard-block** = immediate `BLOCK`, skips remaining gates.
+**Soft** = accumulates points toward threshold.
+
+## Decision Thresholds
+
+| Score | Decision |
+|-------|----------|
+| < 30 | `ALLOW` |
+| 30-69 | `REVIEW` |
+| >= 70 | `BLOCK` |
+
+## Configuration
+
+```yaml
+verveguard:
+  enabled: true
+  block-threshold: 70
+  review-threshold: 30
+
+  blacklist.enabled: true
+  rate-limit.enabled: true
+
+  velocity:
+    enabled: true
+    threshold: 3
+    window-seconds: 60
+    score: 30
+
+  transaction-limit:
+    enabled: true
+    score: 25
+
+  time-window:
+    enabled: true
+    start-hour: 6
+    end-hour: 22
+    score: 10
+
+  location-anomaly:
+    enabled: true
+    anomaly-threshold: 60
+    score: 35
+
+  geo-ip:
+    database-path: /path/to/GeoLite2-City.mmdb
+```
+
+## Implement FraudDataProvider
+
+**Required** — the default does nothing:
 
 ```java
 @Bean
 public FraudDataProvider fraudDataProvider(GeoIpService geoIpService) {
-    return new DefaultFraudDataProvider(geoIpService) {
+    return new AbstractFraudDataProvider(geoIpService) {
         @Override
         public boolean isBlacklisted(String accountId) {
-            return myDatabase.isBlacklisted(accountId);
+            return blacklistRepo.exists(accountId);
         }
-        
+
         @Override
-        public boolean isRateLimited(String ipAddress) {
-            return myRateLimiter.isLimited(ipAddress);
+        public boolean isRateLimited(String ip) {
+            return rateLimiter.isLimited(ip);
         }
-        
-        // Implement other methods...
+
+        @Override
+        public int getVelocityCount(String cardHash, Duration window) {
+            return txnRepo.countSince(cardHash, Instant.now().minus(window));
+        }
+
+        @Override
+        public Optional<BigDecimal> getTransactionLimit(String accountId) {
+            return accountRepo.findLimit(accountId);
+        }
     };
 }
 ```
 
-## GeoIP Database Setup
+## GeoIP Setup
 
-Verveguard uses MaxMind's GeoLite2-City database for offline IP geolocation lookups.
+Download [GeoLite2-City.mmdb](https://dev.maxmind.com/geoip/geolite2-free-geolite2-city/) and configure:
 
-### Automatic Download
-
-On first application startup, the `GeoIpDatabaseInitializer` component automatically:
-1. Checks if the database exists in classpath or local cache
-2. **Downloads GeoLite2-City.mmdb from MaxMind CDN** if not found
-3. Caches the database at `/var/lib/verveguard/GeoLite2-City.mmdb` (configurable)
-4. Reuses the cached database on subsequent startups
-
-**No manual download required!** The database is downloaded automatically on first run.
-
-### Database Location
-
-The GeoIP database is stored at:
-- **Linux/Docker**: `/var/lib/verveguard/GeoLite2-City.mmdb`
-- **Windows**: `C:\Users\<username>\AppData\Local\verveguard\GeoLite2-City.mmdb`
-- **Custom path**: Override via configuration property
-
-### Configuration
-
-```properties
-# Optional: specify custom database path
-# verveguard.geoip.database-path=/custom/path/to/GeoLite2-City.mmdb
-
-# If database path not specified, defaults to:
-# /var/lib/verveguard/GeoLite2-City.mmdb
+```yaml
+verveguard:
+  geo-ip:
+    database-path: /opt/geoip/GeoLite2-City.mmdb
 ```
 
-### Docker Usage
-
-For Docker deployments, mount a persistent volume for the database:
-
-```dockerfile
-FROM openjdk:17-slim
-COPY target/verveguard-app.jar app.jar
-VOLUME /var/lib/verveguard
-ENTRYPOINT ["java", "-jar", "app.jar"]
-```
-
-```bash
-docker run -v geoip-data:/var/lib/verveguard verveguard-app:latest
-```
-
-**Benefits:**
-- First container run: Downloads and caches the database
-- Subsequent runs: Reuse the cached database
-- Volume persists across container restarts
-- Multiple container instances share the same cached database
-
-### Classpath Packaging (Alternative)
-
-If you prefer to bundle the database in your JAR:
-
-1. Download `GeoLite2-City.mmdb` from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolite2-city/)
-2. Place in `src/main/resources/GeoLite2-City.mmdb`
-3. Database will be loaded from classpath automatically
-
-**Trade-off**: JAR size increases by ~50-100MB
-
-## Location Anomaly Gate
-
-The `LocationAnomalyGate` detects suspicious geographical patterns:
-
-### How It Works
-
-1. **Requires last 5 IP addresses** in `FraudContext.lastKnownIpAddresses()`
-2. **Calculates distance** between current and historical IP locations using Haversine formula
-3. **Assigns anomaly score** (0-100):
-   - Different country: +25 points
-   - Distance > 900km (impossible travel): +35 points
-   - Distance > 500km: +20 points
-   - Distance > 100km: +10 points
-4. **Flags transaction** if score >= threshold (default: 60)
-
-### Configuration
-
-```properties
-# Enable/disable location anomaly detection
-verveguard.location-anomaly.enabled=true
-
-# Anomaly score threshold (0-100) for flagging
-verveguard.location-anomaly.anomaly-threshold=60
-
-# Score to assign when anomaly is detected
-verveguard.location-anomaly.score=35
-```
-
-### Example FraudContext
-
-```java
-FraudContext ctx = FraudContext.builder()
-    .transactionId("txn-123")
-    .accountIdentifier("acc-456")
-    .ipAddress("203.0.113.45")  // Current IP
-    .lastKnownIpAddresses(Arrays.asList(
-        "203.0.113.44",  // Yesterday
-        "203.0.113.43",  // 2 days ago
-        "198.51.100.1",  // 3 days ago (different country)
-        "198.51.100.2",
-        "198.51.100.3"
-    ))
-    .amount(BigDecimal.valueOf(1000))
-    .currency("USD")
-    .transactionTime(Instant.now())
-    .metadata(Map.of("device", "mobile"))
-    .build();
-
-FraudDecision decision = fraudEvaluator.evaluate(ctx);
-```
-
-## Architecture
-
-### Gate Execution Order
-
-Gates execute in order (lower `getOrder()` runs first):
-
-1. **BlacklistGate** (order: 1) - Hard block if account is blacklisted
-2. **RateLimitGate** (order: 2) - Hard block if IP is rate limited
-3. **LocationAnomalyGate** (order: 4) - Flag suspicious location patterns
-4. **VelocityGate** (order: 10) - Flag rapid transaction velocity
-5. **TimeWindowGate** (order: 20) - Flag transactions outside normal hours
-6. **TransactionLimitGate** (order: 30) - Flag unusually large transactions
-
-### Fraud Scoring
-
-- **Block Threshold** (default: 70): Transaction is hard-blocked
-- **Review Threshold** (default: 30): Transaction flagged for manual review
-- **Below 30**: Transaction approved
-
-## Extension Points
-
-### Custom Fraud Gates
-
-Implement `FraudGate` interface:
+## Custom Gate
 
 ```java
 @Component
-public class CustomGate implements FraudGate {
-    @Override
-    public String getName() { return "CUSTOM"; }
-    
-    @Override
-    public int getOrder() { return 15; }
-    
-    @Override
-    public boolean isHardBlockCapable() { return true; }
-    
+public class DeviceFingerprintGate implements FraudGate {
+    public String getName() { return "DEVICE_FINGERPRINT"; }
+    public int getOrder() { return 5; }
+    public boolean isHardBlockCapable() { return false; }
+
     @Override
     public GateResult evaluate(FraudContext ctx, FraudDataProvider data) {
-        // Custom logic
+        if (isNewDevice(ctx)) {
+            return GateResult.flag(getName(), 15, "NEW_DEVICE", "Unrecognized device");
+        }
         return GateResult.pass(getName());
     }
 }
 ```
 
-### Custom FraudDataProvider
+## Gotchas
 
-Override methods as needed:
+1. **DefaultFraudDataProvider is a no-op** — logs warnings and returns safe defaults. You must override the abstract methods.
 
-```java
-public class CustomFraudDataProvider extends DefaultFraudDataProvider {
-    // Inherited: getLocationAnomalyScore() - fully implemented
-    
-    @Override
-    public boolean isBlacklisted(String accountId) {
-        // Custom blacklist logic
-    }
-    
-    // Override other methods as needed
-}
-```
+2. **GeoLite2-City.mmdb not included** — download and provide your own. Location checks return 0 if missing.
 
-## Troubleshooting
+3. **Gate order matters** — sorted by `getOrder()`, then alphabetically by `getName()`. Hard-block gates run first.
 
-### GeoIP Database Not Found
+4. **TimeWindowGate uses system timezone** — `ZoneId.systemDefault()`. Adjust `start-hour`/`end-hour` if server timezone differs from users.
 
-**Error**: `GeoLite2-City.mmdb not found in classpath`
+5. **LocationAnomalyGate needs history** — populate `lastKnownIpAddresses` in `FraudContext`. Returns 0 if null/empty.
 
-**Solutions**:
-1. **Wait for auto-download**: First startup automatically downloads the database
-2. **Verify network access**: Ensure application can reach MaxMind CDN
-3. **Check directory permissions**: `/var/lib/verveguard/` must be writable
-4. **Manual placement**: Download from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolite2-city/) and place at configured path
+6. **Scores accumulate** — velocity (30) + after-hours (10) + over-limit (25) = 65 → `REVIEW`.
 
-### Location Anomaly Not Working
+7. **Disable the whole library**:
+   ```yaml
+   verveguard:
+     enabled: false
+   ```
 
-**Check**:
-1. Gate is enabled: `verveguard.location-anomaly.enabled=true`
-2. `FraudContext.lastKnownIpAddresses()` is populated with valid IPs
-3. Valid IP addresses in list (not nulls or empty strings)
+## Location Anomaly Scoring
 
-## Performance
+| Condition | Points |
+|-----------|--------|
+| Different country | +25 |
+| Distance > 900km | +35 |
+| Distance > 500km | +20 |
+| Distance > 100km | +10 |
 
-- **Location lookups**: < 1ms (in-memory cache)
-- **Distance calculations**: < 0.1ms per comparison
-- **Full fraud evaluation**: < 10ms typical
-- **Database file**: ~50-100MB (downloaded once, cached)
-- **Memory cache**: 10,000 IP entries with 1-hour TTL
-
-## License
-
-Proprietary - Interswitch
-
+Score capped at 100. Flagged if >= `anomaly-threshold` (default 60).

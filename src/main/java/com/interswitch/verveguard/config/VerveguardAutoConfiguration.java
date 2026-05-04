@@ -5,6 +5,8 @@ import com.interswitch.verveguard.api.FraudEvaluator;
 import com.interswitch.verveguard.api.FraudGate;
 import com.interswitch.verveguard.api.GeoIpService;
 import com.interswitch.verveguard.core.*;
+import com.interswitch.verveguard.core.pipeline.FraudPipeline;
+import com.interswitch.verveguard.core.service.MaxMindGeoIpService;
 import com.interswitch.verveguard.gates.*;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

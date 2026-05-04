@@ -53,7 +53,7 @@ public abstract class AbstractFraudDataProvider implements FraudDataProvider {
     // ========== LOCATION ANOMALY DETECTION (FULLY IMPLEMENTED) ==========
 
     @Override
-    public final int getLocationAnomalyScore(String currentIp, Set<String> lastKnownIpAddresses) {
+    public int getLocationAnomalyScore(String currentIp, Set<String> lastKnownIpAddresses) {
         try {
             GeoIpService.LocationInfo currentLocation = getOrFetchLocation(currentIp);
             if (currentLocation == null) {
@@ -78,8 +78,8 @@ public abstract class AbstractFraudDataProvider implements FraudDataProvider {
                     break;
                 }
 
-                // Skip duplicates and the current IP itself (distance = 0, same country)
-                if (!lastKnownIpAddresses.add(historicalIp) || historicalIp.equals(currentIp)) {
+                // Skip the current IP itself (distance = 0, same country)
+                if (historicalIp.equals(currentIp)) {
                     continue;
                 }
 

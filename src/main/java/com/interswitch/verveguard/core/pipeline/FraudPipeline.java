@@ -22,13 +22,17 @@ public class FraudPipeline implements FraudEvaluator {
 
     public FraudPipeline(List<FraudGate> gates, FraudDataProvider dataProvider, int blockThreshold, int reviewThreshold) {
         // split the flat gate list into two ordered lists based on whether the gate can hard-block
+        // tiebreaker: sort by order, then by name for deterministic ordering
+        Comparator<FraudGate> gateOrder = Comparator
+                .comparingInt(FraudGate::getOrder)
+                .thenComparing(FraudGate::getName);
         this.hardBlockGates = gates.stream()
                 .filter(FraudGate::isHardBlockCapable)
-                .sorted(Comparator.comparingInt(FraudGate::getOrder))
+                .sorted(gateOrder)
                 .toList();
         this.softGates = gates.stream()
                 .filter(g -> !g.isHardBlockCapable())
-                .sorted(Comparator.comparingInt(FraudGate::getOrder))
+                .sorted(gateOrder)
                 .toList();
         this.dataProvider = dataProvider;
         this.blockThreshold = blockThreshold;
