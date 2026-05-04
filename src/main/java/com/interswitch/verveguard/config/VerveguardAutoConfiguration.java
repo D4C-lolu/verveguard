@@ -69,6 +69,7 @@ public class VerveguardAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "verveguard.location-anomaly", name = "enabled", matchIfMissing = true)
     public GeoIpService geoIpService(VerveguardProperties props) throws Exception {
         var config = props.getGeoIp();
         return new MaxMindGeoIpService(config.getDatabasePath());
