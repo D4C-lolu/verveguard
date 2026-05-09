@@ -136,7 +136,16 @@ public abstract class AbstractFraudDataProvider implements FraudDataProvider {
     }
 
     private GeoIpService.LocationInfo getOrFetchLocation(String ipAddress) {
+        if (isPrivateIp(ipAddress)) return null;
         return locationCache.get(ipAddress, geoIpService::lookup);
+    }
+
+    private static boolean isPrivateIp(String ip) {
+        return ip.startsWith("10.")
+                || ip.startsWith("192.168.")
+                || ip.startsWith("172.16.")
+                || ip.startsWith("127.")
+                || ip.equals("::1");
     }
 
     private static final int EARTH_RADIUS_KM = 6371;
