@@ -1,5 +1,6 @@
 package com.interswitch.verveguard.core.initializer;
 
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -21,34 +22,29 @@ import java.net.http.HttpResponse;
 public class GeoIpDatabaseInitializer {
 
     private static final String GEOLITE2_DOWNLOAD_URL =
-        "https://git.io/GeoLite2-City.mmdb";
+            "https://git.io/GeoLite2-City.mmdb";
     private static final String DEFAULT_DB_PATH = "GeoLite2-City.mmdb";
 
-    public GeoIpDatabaseInitializer() {
+    @PostConstruct
+    private void initializeDatabase() {
         try {
-            initializeDatabase();
+            if (databaseExistsInClasspath()) {
+                log.info("GeoLite2 database already exists in classpath");
+                return;
+            }
+
+            File dbFile = new File(DEFAULT_DB_PATH);
+            if (dbFile.exists()) {
+                log.info("GeoLite2 database already exists at: {}", dbFile.getAbsolutePath());
+                return;
+            }
+
+            log.info("Downloading GeoLite2-City database for the first time...");
+            downloadDatabase(dbFile);
+
         } catch (Exception e) {
             log.warn("Failed to initialize GeoIP database on startup: {}", e.getMessage());
         }
-    }
-
-    private void initializeDatabase() throws IOException {
-        // Check if database already exists in classpath resources
-        if (databaseExistsInClasspath()) {
-            log.info("GeoLite2 database already exists in classpath");
-            return;
-        }
-
-        // Check if database file already exists in temp/app directory
-        File dbFile = new File(DEFAULT_DB_PATH);
-        if (dbFile.exists()) {
-            log.info("GeoLite2 database already exists at: {}", dbFile.getAbsolutePath());
-            return;
-        }
-
-        // Download the database
-        log.info("Downloading GeoLite2-City database for the first time...");
-        downloadDatabase(dbFile);
     }
 
     private boolean databaseExistsInClasspath() {
@@ -61,9 +57,10 @@ public class GeoIpDatabaseInitializer {
     }
 
     private void downloadDatabase(File targetFile) throws IOException {
-        try (HttpClient client = HttpClient.newBuilder().build()){
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build()) {
 
-            // Follow redirects to the actual MaxMind CDN
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(GEOLITE2_DOWNLOAD_URL))
                     .GET()
@@ -85,20 +82,21 @@ public class GeoIpDatabaseInitializer {
                             }
                         }
                         log.info("Successfully downloaded GeoLite2 database to: {}",
-                            targetFile.getAbsolutePath());
+                                targetFile.getAbsolutePath());
                         return;
-                    } else if (response.statusCode() >= 400) {
+                    } else {
                         throw new IOException("HTTP " + response.statusCode() + " downloading database");
                     }
                 } catch (IOException | InterruptedException e) {
                     if (attempt == maxRetries) {
                         throw new IOException("Failed to download GeoLite2 database after " + maxRetries + " attempts", e);
                     }
-                    log.warn("Download attempt {} failed, retrying...", attempt, e);
-                    Thread.sleep(1000L * attempt); // Exponential backoff
+                    log.warn("Download attempt {} failed, retrying...", attempt);
+                    Thread.sleep(1000L * attempt);
                 }
             }
-
+        } catch (IOException e) {
+            throw e;
         } catch (Exception e) {
             throw new IOException("Could not download GeoLite2 database: " + e.getMessage(), e);
         }

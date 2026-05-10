@@ -10,9 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-@Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "verveguard.health", name = "enabled", matchIfMissing = true)
 public class VerveguardHealthIndicator implements HealthIndicator {
 
     private final List<FraudGate> gates;

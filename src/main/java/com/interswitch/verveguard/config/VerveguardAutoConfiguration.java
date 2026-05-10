@@ -8,6 +8,7 @@ import com.interswitch.verveguard.core.*;
 import com.interswitch.verveguard.core.pipeline.FraudPipeline;
 import com.interswitch.verveguard.core.service.MaxMindGeoIpService;
 import com.interswitch.verveguard.gates.*;
+import com.interswitch.verveguard.health.VerveguardHealthIndicator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -88,5 +89,18 @@ public class VerveguardAutoConfiguration {
             FraudDataProvider dataProvider,
             VerveguardProperties props) {
         return new FraudPipeline(gates, dataProvider, props.getBlockThreshold(), props.getReviewThreshold());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(
+            prefix = "verveguard.health",
+            name = "enabled",
+            matchIfMissing = true
+    )
+    public VerveguardHealthIndicator verveguardHealthIndicator(
+            List<FraudGate> gates,
+            VerveguardProperties props) {
+        return new VerveguardHealthIndicator(gates, props);
     }
 }
